@@ -1,54 +1,38 @@
-#===========================
-#Run model
-#===========================
+# function to run size spectrum model from https://github.com/alicerogers/Fisheries-and-degrading-reefs
 
-run_model<-function(params, initial.run = FALSE, fish.herbs = TRUE){
-  
-  with(params, {
-    
-    
-    #---------------------------------------------------------------------------------------
-    # Functions called in integration
-    #---------------------------------------------------------------------------------------
-    
+function run_model(params, initial_run = false, fish_herbs = true)
     ui0 = 10^pp
-    Fref=((min.fishing.size-xmin)/dx)+1
+    Int64(Fref)=((min_fishing_size-xmin)/dx)+1
     
     # Function to construct the spectrum at the start of integration
-    u.init.f = function(x, ui0, init.slope) { return (ui0*10^(init.slope*x)) }
+    function u_init_f(x, ui0, init_slope) return ui0*10 .^ collect(init_slope*x) end
     
     # Function to build a lookup table for diet preference of all combinations of predator 
     # and prey body size: diet preference (in the predator spectrum only)
     
-    phi.f=function(q){
-      q=q
-      q0=q0
-      sd.q=sd.q
-      qmax=qmax
-      qmin=qmin
+    function phi_f(q; q0=q0, sd_q=sd_q, qmax=qmax, qmin=qmin)
       
-      phi=ifelse(q>0,exp(-(q-q0)*(q-q0)/(2*sd.q*sd.q))/(sd.q*sqrt(2.0*pi)),0)   # normalise feeding kernel to sum to 1
-      #phi=ifelse(q<=qmax,phi,0)                                                # remove truncation
-      #phi=ifelse(q>=qmin,phi,0)
-      return(phi)
-    }
+      phi = ifelse.(q .> 0, exp.(-(q .- q0).^2 ./ (2 .* sd_q.^2)) ./ (sd_q .* sqrt(2π)), 0)
+      return phi
+    end
     
     # Functions to build lookup tables for components of integration which remain constant
-    gphi.f = function(q)        { return( 10^(-q)       * phi.f(q )) }  #growth
-    mphi.f = function(q)        { return( 10^(alpha*q2) * phi.f(q2)) }	#mortality
+    function gphi_f(q) return 10^(-q)       * phi_f(q ) end  #growth
+    function mphi_f(q2; alpha=alpha) return 10^(alpha*q2) * phi_f(q2) end	#mortality
     
     # Function to build lookup table for components of 10^(alpha*x)
-    expax.f    = function(x, alpha.u) { return( 10^(alpha*x )) }
+    function expax_f(x, alpha) return 10 .^ collect(alpha*x ) end
     
     # Function to compute convolution products: can be for growth or mortality depending on phi
-    convolution.f = function(phi, u)
-    {   res = matrix(NA,length(x),1)
-        for (i in 1:length(res))
-        {   res[i] = 0.0
-            res[i] = sum(phi[,i] * u * dx)
-        }
-        return(res)
-    }
+    function convolution_f(phi, u)
+    res = matrix(NA,length(x),1)
+        for i in 1:length(res)
+            res[i] = 0.0
+            res[i] = sum(phi[:,i] * u * dx)
+            
+        end
+        return res
+    end
     
       
     #---------------------
@@ -56,44 +40,49 @@ run_model<-function(params, initial.run = FALSE, fish.herbs = TRUE){
     #---------------------
   
   
-   vulnerability <- function(refuge_density, competitor_density){
-     res = 1
+    function vulnerability(refuge_density, competitor_density; x = x, min_A=min_A)
+        res = zeros(Float64, length(x))
      
-     for(i in 1:length(x)){
-       
-       if (competitor_density[i] == 0) {res[i] = 1}
-       
-       else {res[i] = 1 - (refuge_density[i] / competitor_density[i])}
-       
-       if (res[i] < min.A) {res[i] = min.A}
-       else {res[i] = res[i]}
-     }
-     return(res)
-   }
+        for i in 1:length(x)
+        
+            if competitor_density[i] == 0 
+                res[i] = 1
+            else 
+                res[i] = 1 - (refuge_density[i] / competitor_density[i])
+            end
+
+            if res[i] < min_A
+                res[i] = min_A
+            else 
+                res[i] = res[i]
+            end
+        end
+        return res
+    end
         
     #--------------------------------
     # Growth and Mortality Equations
     #--------------------------------
     
     ## predators
-    death.u<-function(u,A,expax,mphi,a.u,pref.pel){return((a.u*pref.pel*A*expax)*(u*dx)%*%(mphi))}    # use faster matrix method instead of convolution loop function
+    function death_u(u,A,expax,mphi,a_u,pref_pel) return (a_u .* pref_pel .* A .* expax) .* ((u .* dx)' * mphi |> vec) end    # use faster matrix method instead of convolution loop function
      
     ## herbivores
-    death.h<-function(u,A,expax,mphi,a.h,pref.herb){return((a.h*pref.herb*A*expax)*(u*dx)%*%(mphi))}
+    function death_h(u,A,expax,mphi,a_h,pref_herb) return (a_h .* pref_herb .* A .* expax) .* ((u .* dx)' * mphi |> vec) end
     
     ## detritivores
-    death.v<-function(u,A,expax,mphi,a.v,pref.ben){return((a.v*pref.ben*A*expax)*(u*dx)%*%(mphi))}
+    function death_v(u,A,expax,mphi,a_v,pref_ben) return (a_v .* pref_ben .* A .* expax) .* ((u .* dx)' * mphi |> vec) end
 
     
-    ## detritus output (g.m-3.yr-1)
-    out.w<-function(A.v,A.h,v,w,h,alpha.h,pref.det){return(sum((A.v*(10^(x*0.75))*w*v)*dx)+sum((A.h*pref.det*(10^(x*alpha.h))*w*h)*dx))} # biomass density removed by detritivores per year    
-    ##Added a pref.det and pref.alg function so that herbivores are both feeding on both types of resource
+    ## detritus output (g_m-3.yr-1)
+    function out_w(A_v,A_h,v,w,h,alpha_h,pref_det) return (sum((A_v .* (10 .^ (x*0.75)) .* w .* v) .* dx) + sum((A_h .* pref_det .* (10 .^ (x*alpha_h)) .* w .* h) .* dx)) end # biomass density removed by detritivores per year    
+    ##Added a pref_det and pref_alg function so that herbivores are both feeding on both types of resource
     
 #----------------------------------
 #Algal grazing dynamics
 
-    ## algae output (g.m-2.yr-1)
-    out.a <- function(A.h, alpha.h, h, a, pref.alg){return(sum(pref.alg*A.h*(10^(x*alpha.h)*a*h)*dx))} #biomass density removed by herbivores ?per day if using daily data or per hyear if using yearly data? 
+    ## algae output (g_m-2.yr-1)
+    function out_a(A_h, alpha_h, h, a, pref_alg) return (sum(pref_alg .* A_h .* (10 .^ (x*alpha_h) .* a .* h) .* dx)) end #biomass density removed by herbivores ?per day if using daily data or per hyear if using yearly data? 
             
     #---------------------------------------------------------------------------------------
     # Initialising matrices
@@ -101,62 +90,64 @@ run_model<-function(params, initial.run = FALSE, fish.herbs = TRUE){
     
       
     # q1 is a square matrix holding the log(predatorsize/preysize) for all combinations of sizes
-    q1  = matrix(NA, length(x), length(y))
-    for (i in 1:length(y)) { q1[,i] = y[i] - x}
+    q1  = Matrix{Union{Float64, Missing}}(missing, length(x), length(y))
+    for i in 1:length(y) 
+        q1[:,i] = y[i] .- x 
+    end
     
     # q2 is the reverse matrix holding the log(preysize/predatorsize) for all combinations of sizes
-    q2 = matrix(-q1, length(x), length(y))	
+    q2 = -q1	
     
     # matrix for recording the two size spectra over time
-    V = U = H   = array(0, c(length(x), N))
+    V = U = H   = zeros(Float64, length(x), N)
     
-    # vector to hold detrtitus biomass density (g.m-3)
-    W = rep(0,N)
+    # vector to hold detrtitus biomass density (g_m-3)
+    W = zeros(N)
     
-    #Vector to hold algal biomass density (g.m-3)
-    A = rep(0,N)
+    #Vector to hold algal biomass density (g_m-3)
+    A = zeros(N)
     
     # matrix for keeping track of growth and ingested food:
-    GG.v = GG.u = GG.h = array(0, c(length(x), N))  
+    GG_v = GG_u = GG_h = zeros(length(x), N)  
 
     # matrix for keeping track of vulnerability through time
-    a.u = a.h = array(0, c(length(x), N))
+    a_u = a_h = zeros(length(x), N)
    
     
-##*************
+##*****
     # Optional matrices for keeping track of reproduction from ingested food
-    #R.v = R.u = R.h = array(0, c(length(x), N))
+    #R_v = R_u = R_h = array(0, c(length(x), N))
     
     # matrix for keeping track of predation mortality
-    PM.v = PM.u = PM.h  = array(0, c(length(x), N))   
+    PM_v = PM_u = PM_h  = zeros(length(x), N)   
     
     # matrix for keeping track of  total mortality (Z)
-    Z.v = Z.u = Z.h = array(0, c(length(x), N))
+    Z_v = Z_u = Z_h = zeros(length(x), N)
     
     # matrix for keeping track of senescence mortality and other (intrinsic) mortality
-    SM.v = SM.u  = SM.h  =OM.v = OM.u  = OM.h = array(0, length(x))
+    SM_v = SM_u  = SM_h  =OM_v = OM_u  = OM_h = zeros(length(x))
     
     # empty vector to hold fishing mortality rates at each size class
-    Fvec_pred = rep(0,length(x))
-    Fvec_herb = rep(0,length(x))
+    Fvec_pred = zeros(length(x))
+    Fvec_herb = zeros(length(x))
     
     #Empty vector to hold fisheries yield
-    Yp  = array(0, c(length(x), N))  
-    Yh = array(0, c(length(x),N))
+    Yp  = zeros(length(x), N)  
+    Yh = zeros(length(x),N)
     
     # short hand for matrix indexing
-    idx=2:end
+    idx = 2:size_end
     
     # lookup tables for terms in the integrals which remain constant over time
-    gphi  = gphi.f(q1)
-    mphi  = mphi.f(q2)
+    gphi  = gphi_f(q1)
+    mphi  = mphi_f(q2)
     
     # lookup table for components of 10^(alpha*x)
-    expax = expax.f(x, alpha)
+    expax = expax_f(x, alpha)
     
     # vectors for storing slopes of regression
-    slope.v.lm = slope.u.lm = rep(0,(N-1))
-    slope.v.nls = slope.u.nls = rep(0,(N-1))
+    slope_v_lm = slope_u_lm = zeros(N-1)
+    slope_v_nls = slope_u_nls = zeros(N-1)
     
     #---------------------------------------------------------------------------------------
     # Numerical integration
@@ -164,345 +155,343 @@ run_model<-function(params, initial.run = FALSE, fish.herbs = TRUE){
     
     ##INITIAL VALUES
     
-    if (initial.run==T) {
+    if initial_run
       
       # if running to equilibrium use given initial values
       
-      U[1:(ref-1),1]<-u.init.f(x,ui0,r.plank)[1:(ref-1)]*flow    # (phyto+zoo)plankton size spectrum  
+      U[1:(Int64(ref)-1),1] = u_init_f(x,ui0,r_plank)[1:(Int64(Int64(ref))-1)] .* flow    # (phyto+zoo)plankton size spectrum  
       
-      U[ref:end,1]<-u.init.f(x,ui0,init.slope = pred.slope)[ref:end] 
+      U[Int64(ref):end,1] = u_init_f(x,ui0, pred_slope)[Int64(ref):end] 
       
-      H[ref.herb:end,1]<-u.init.f(x,ui0,init.slope = herb.slope)[ref.herb:end]*herb.prod
+      H[Int64(ref_herb):end,1] = u_init_f(x,ui0, herb_slope)[Int64(ref_herb):end] .* herb_prod
        
-      V[refinv:(ref.det-1),1]<-u.init.f(x,invert.prod,invert.slope)[refinv:(ref.det-1)]
-      V[ref.det:inv_end,1]<-u.init.f(x,invert.prod,init.slope = invert.slope)[ref.det:inv_end]
+      V[Int64(refinv):(Int64(ref_det)-1),1] = u_init_f(x,invert_prod,invert_slope)[Int64(refinv):(Int64(ref_det)-1)]
+      V[Int64(ref_det):inv_end,1] = u_init_f(x,invert_prod,invert_slope)[Int64(ref_det):inv_end]
       
-      W[1]<-W.init                                                          # initial detritus biomass density (g.m-3) 
-      A[1]<-A.init                                                          # initial algal biomass density (g.m-3)
+      W[1] = W_init                                                          # initial detritus biomass density (g_m-3) 
+      A[1] = A_init                                                          # initial algal biomass density (g_m-3)
       
-    } else {
+    else
       
       # use values from non-complex initial run
       
-      U[1:(ref-1),1]<-u.init.f(x,ui0,r.plank)[1:(ref-1)]*flow                    # (phyto+zoo)plankton size spectrum  
-      U[ref:end,1]<-initial.res$Preds[ref:end]                                      # initial consumer size spectrum
-      H[ref.herb:end,1]<-initial.res$Herbs[ref.herb:end]
-      V[ref.det:inv_end,1]<-initial.res$Invs[ref.det:inv_end]   # initial detritivore spectrum
-      W[1]<-initial.res$W
-      A[1]<-initial.res$A
+      U[1:(Int64(ref)-1),1] = u_init_f(x,ui0,r_plank)[1:(Int64(ref)-1)]*flow                    # (phyto+zoo)plankton size spectrum  
+      U[Int64(ref):end,1] = initial_res.Preds[Int64(ref):end]                                      # initial consumer size spectrum
+      H[Int64(ref_herb):end,1] = initial_res.Herbs[Int64(ref_herb):end]
+      V[Int64(ref_det):inv_end,1] = initial_res.Invs[Int64(ref_det):inv_end]   # initial detritivore spectrum
+      W[1] = initial_res.W
+      A[1] = initial_res.A
       
-    }
+    end
     
     # intrinsic natural mortality
-    OM.u<-mu0*10^(-0.25*x)      
-    OM.v<-mu0*10^(-0.25*x)      
-    OM.h<-mu0*10^(-0.25*x)
+    OM_u = mu0*10 .^ (-0.25*x)      
+    OM_v = mu0*10 .^ (-0.25*x)      
+    OM_h = mu0*10 .^ (-0.25*x)
     
     # senescence mortality rate to limit large fish from building up in the system
     # same function as in Law et al 2008, with chosen parameters gives similar M2 values as in Hall et al. 2006
-    SM.u=k.sm*10^(p.s*(x-xs))
-    SM.v=k.sm*10^(p.s*(x-xs))
-    SM.h=k.sm*10^(p.s*(x-xs))
+    SM_u = k_sm*10 .^ (p_s*(x .- xs))
+    SM_v = k_sm*10 .^ (p_s*(x .- xs))
+    SM_h = k_sm*10 .^ (p_s*(x .- xs))
     
     
     #Fishing mortality at each size
-    Fvec_pred[Fref:end] = rep(Fmort_pred,length(Fvec_pred[Fref:end]))  
-    Fvec_herb[Fref:end] = rep(Fmort_herb,length(Fvec_herb[Fref:end]))
+    Fvec_pred[Int64(Fref):end] = fill(Fmort_pred,length(Fvec_pred[Int64(Fref):end]))  
+    Fvec_herb[Int64(Fref):end] = fill(Fmort_herb,length(Fvec_herb[Int64(Fref):end]))
     
     # iteration over time
-    for (i in 1:(N-1)) {
+    @showprogress for i in 1:(N-1)
+        ##----------------------------------------
+        ##Density dependent vulnerability function
+        a_u[:,i]  =  vulnerability(refuge, U[:,i]+H[:,i])      
+        a_h[:,i]  =  vulnerability(refuge, H[:,i]+U[:,i])
+        a_v  =  1
+
+        #------------------------
+        ##Feeding rate functions
       
-      
-##----------------------------------------
-##Density dependent vulnerability function
-a.u[,i] <- vulnerability(refuge, U[,i]+H[,i])      
-a.h[,i] <- vulnerability(refuge, H[,i]+U[,i])
-a.v <- 1
+        #Feeding on predators
+        f_pel  =  (a_u[:, i] .* pref_pel .* A_u .* expax) .* ((U[:, i] .* dx)' * gphi |> vec)
+    
+        #Feeding on herbivores
+        f_herb  =  (a_h[:,i] .* pref_herb .* A_u .* expax) .* ((H[:,i] .* dx)' * gphi |> vec)      
+        
+        #Feeding on invertebrates
+        f_ben  =  (pref_ben .* A_u .* expax) .* ((V[:,i] .* dx)' * (gphi) |> vec)
+        
+        #Feeding on algae
+        f_alg = (((1/10) .^ x) .* (pref_alg*A_h*10 .^ (x*alpha_h) .* A[i]))
 
-#------------------------
-##Feeding rate functions
-      
-      #Feeding on predators
-      f.pel <- as.vector((a.u[,i]*pref.pel*A.u*expax)*(U[,i]*dx)%*%(gphi))
- 
-      #Feeding on herbivores
-      f.herb <- as.vector((a.h[,i]*pref.herb*A.u*expax)*(H[,i]*dx)%*%(gphi))      
-      
-      #Feeding on invertebrates
-      f.ben <- as.vector((pref.ben*A.u*expax)*(V[,i]*dx)%*%(gphi))
-      
-      #Feeding on algae
-      f.alg<-((1/10^x)*(pref.alg*A.h*10^(x*alpha.h)*A[i]))
-
-      #Feeding on detritus
-      f.det<-((1/10^x)*(A.v*10^(x*0.75)*W[i]))
-      
-      #Feeding on detritus by herbivores 
-      f.det_H<-((1/10^x)*(pref.det*A.h*10^(x*alpha.h)*W[i]))
+        #Feeding on detritus
+        f_det = (((1/10) .^ x) .* (A_v*10 .^ (x*0.75) .* W[i]))
+        
+        #Feeding on detritus by herbivores 
+        f_det_H = (((1/10) .^ x) .* (pref_det*A_h*10 .^ (x*alpha_h) .* W[i]))
 
 
-#------------------------
-##New growth integrals
+        #------------------------
+        ##New growth integrals
 
-      #Growth of predators
-      GG.u[,i] <- K.u*(f.pel) + K.h*(f.herb) + K.v*(f.ben)
+        #Growth of predators
+        GG_u[:,i]  =  K_u .* (f_pel) .+ K_h .* (f_herb) .+ K_v .* (f_ben)
 
-      #Growth of herbivores
-      GG.h[,i] <- K.a*(f.alg) + K.d*(f.det_H) #This now has a lower conversion efficiency for detritus
+        #Growth of herbivores
+        GG_h[:,i]  =  K_a .* (f_alg) .+ K_d .* (f_det_H) #This now has a lower conversion efficiency for detritus
 
-      #Growth of invertebrates 
-      GG.v[,i] <- K.d*(f.det) #This now has a lower conversion efficiency for detritus
+        #Growth of invertebrates 
+        GG_v[:,i]  =  K_d .* (f_det) #This now has a lower conversion efficiency for detritus
 
-#------------------------
+        #------------------------
 
       # Predator death integrals 
       # predation mortality
-      PM.u[,i]<-as.vector(death.u(U[,i],A.u,expax,mphi,a.u[,i],pref.pel))
-      Z.u[,i]<- PM.u[,i]+ OM.u + SM.u + Fvec_pred
+      PM_u[:,i] = death_u(U[:,i],A_u,expax,mphi,a_u[:,i],pref_pel)
+      Z_u[:,i] =  PM_u[:,i] .+ OM_u .+ SM_u .+ Fvec_pred
       
       # Herbivore death integral
-      PM.h[,i]<-as.vector(death.h(U[,i],A.u,expax,mphi,a.h[,i],pref.herb))
-      Z.h[,i]<-PM.h[,i]+ OM.h + SM.h + Fvec_herb
+      PM_h[:,i] = death_h(U[:,i],A_u,expax,mphi,a_h[:,i],pref_herb)
+      Z_h[:,i] = PM_h[:,i] .+ OM_h .+ SM_h .+ Fvec_herb
      
       # Benthos death integral 
-      PM.v[,i]<-as.vector(death.v(U[,i],A.u,expax,mphi,a.v,pref.ben))
-      Z.v[,i]<-PM.v[,i]+ OM.v + SM.v
+      PM_v[:,i] = death_v(U[:,i],A_u,expax,mphi,a_v,pref_ben)
+      Z_v[:,i] = PM_v[:,i] .+ OM_v .+ SM_v
       
-#------------------------
-##New reproduction values - optional
+        #------------------------
+        ##New reproduction values - optional
 
-#R.u[,i] <- r.u*(f.pel) + r.h*(f.herb) + r.v*(f.ben)
+        #R_u[:,i]  =  r_u*(f_pel) + r_h*(f_herb) + r_v*(f_ben)
 
-#R.h[,i] <- r.a*(f.alg) 
+        #R_h[:,i]  =  r_a*(f_alg) 
 
-#R.v[,i] <- r.d*(f.det) 
+        #R_v[:,i]  =  r_d*(f_det) 
 
-#------------------------
+        #------------------------
 
-      # biomass density eaten by pred (g.m-3.yr-1)
-      eatenbypred<-10^x*(a.u[,i]*pref.pel*A.u*expax*(U[,i]%*%gphi)*U[,i] + a.v*pref.ben*A.u*expax*(V[,i]%*%gphi)*U[,i] + a.h[,i]*pref.herb*A.u*expax*(H[,i]%*%gphi)*U[,i])
+      # biomass density eaten by pred (g_m-3.yr-1)
+      eatenbypred = 10 .^ x .* (a_u[:,i] .* pref_pel .* A_u .* expax .* (U[:,i]' * gphi |> vec) .* U[:,i] .+ a_v .* pref_ben .* A_u .* expax .* (V[:,i]' * gphi |> vec) .* U[:,i] .+ a_h[:,i] .* pref_herb .* A_u .* expax .* (H[:,i]' * gphi |> vec) .* U[:,i])
       
-                        (a.u[,i]*pref.pel*A.u*expax)*(U[,i]*dx)%*%(gphi)
+    #                     (a_u[:,i]*pref_pel*A_u*expax)*(U[:,i]*dx)*(gphi)
 
 
-      # biomass density defecated by pred (g.m-3.yr-1)
-      defbypred<-10^x*(def.high*a.u[,i]*pref.pel*A.u*expax*(U[,i]%*%gphi)*U[,i] + def.low*a.v*pref.ben*A.u*expax*(V[,i]%*%gphi)*U[,i] + 
-      def.low*a.h[,i]*pref.herb*A.u*expax*(H[,i]%*%gphi)*U[,i])
+      # biomass density defecated by pred (g_m-3.yr-1)
+      defbypred = 10 .^ x .* (def_high .* a_u[:,i] .* pref_pel .* A_u .* expax .* (U[:,i]' * gphi |> vec) .* U[:,i] .+ def_low .* a_v .* pref_ben .* A_u .* expax .* (V[:,i]' * gphi |> vec) .* U[:,i] .+ 
+        def_low .* a_h[:,i] .* pref_herb .* A_u .* expax .* (H[:,i]' * gphi |> vec) .* U[:,i])
       
-      Yp[Fref:end,i]<-Fvec_pred[Fref:end]*U[Fref:end,i]*10^x[Fref:end]
-      Yh[Fref:end,i]<-Fvec_herb[Fref:end]*H[Fref:end,i]*10^x[Fref:end]
+      Yp[Int64(Fref):end,i] = Fvec_pred[Int64(Fref):end] .* U[Int64(Fref):end,i] .* 10 .^ x[Int64(Fref):end]
+      Yh[Int64(Fref):end,i] = Fvec_herb[Int64(Fref):end] .* H[Int64(Fref):end,i] .* 10 .^ x[Int64(Fref):end]
             
-      ##Detritus Biomass Density Pool - fluxes in and out (g.m-3.yr-1) of detritus pool and solve for detritus biomass density in next time step 
+      ##Detritus Biomass Density Pool - fluxes in and out (g_m-3.yr-1) of detritus pool and solve for detritus biomass density in next time step 
       
       #considering pelagic faeces as input as well as dead bodies from both pelagic and benthic communities 
       #and phytodetritus (dying sinking phytoplankton)
       
-      if (det.coupling==1.0) input.w<-sinking.rate*(sum(defbypred[ref:end]*dx)+ sum(OM.u[1:end]*U[1:end,i]*10^(x[1:end])*dx) + sum(SM.u[1:end]*U[1:end,i]*10^(x[1:end])*dx)
-                                                    + sum(OM.h[1:end]*H[1:end,i]*10^(x[1:end])*dx) + sum(SM.h[1:end]*H[1:end,i]*10^(x[1:end])*dx)) +
-                                                      sum(OM.v[1:end]*V[1:end,i]*10^(x[1:end])*dx) + sum(SM.v[1:end]*V[1:end,i]*10^(x[1:end])*dx) 
-                                                    #******error fixed 18.11.14 - was missing an *dx - end of second line***********************      
+        if det_coupling==1.0
+            input_w = sinking_rate * (
+                sum(defbypred[Int64(ref):end]*dx) + sum(OM_u[1:end] .* U[1:end,i] .* 10 .^ (x[1:end]) .* dx) + sum(SM_u[1:end] .* U[1:end,i] .* 10 .^ (x[1:end]) .* dx)
+                                                    + sum(OM_h[1:end] .* H[1:end,i] .* 10 .^ (x[1:end]) .* dx) + sum(SM_h[1:end] .* H[1:end,i] .* 10 .^ (x[1:end]) .* dx)) +
+                                                      sum(OM_v[1:end] .* V[1:end,i] .* 10 .^ (x[1:end]) .* dx) + sum(SM_v[1:end] .* V[1:end,i] .* 10 .^ (x[1:end]) .* dx
+            ) 
+                                                    #**error fixed 18.11.14 - was missing an *dx - end of second line*********    
+        end  
 
       
-      if (det.coupling==0.0) input.w<-sum(OM.v[1:end]*V[1:end,i]*10^(x[1:end])*dx) + sum(SM.v[1:end]*V[1:end,i]*10^(x[1:end])*dx) 
+        if det_coupling==0.0 
+            input_w = sum(OM_v[1:end] .* V[1:end,i] .* 10 .^ (x[1:end]) .* dx) + sum(SM_v[1:end] .* V[1:end,i] .* 10 .^ (x[1:end]) .* dx) 
+        end
       
       
-      output.w<-out.w(v=V[,i],A.v=A.v, w=W[i], h=H[,i], A.h=A.h, pref.det=pref.det, alpha.h=alpha.h) 
+      output_w = out_w(A_v, A_h, V[:, i], W[i], H[:, i], alpha_h, pref_det) 
       
-      # change in detritus biomass density (g.m-3.yr-1)
-      dW<-input.w - (output.w) 
+      # change in detritus biomass density (g_m-3.yr-1)
+      dW = input_w - (output_w) 
       #print(dW)
       
-      W[i+1]=W[i] + dW*dt        #biomass density of detritus g.m-2
+      W[i+1]=W[i] + dW*dt        #biomass density of detritus g_m-2
       
-#---------------
-#Algal dynamics
+        #---------------
+        #Algal dynamics
       
-      output.a <- out.a(a = A[i], A.h = A.h, alpha.h = alpha.h, h = H[,i], pref.alg=pref.alg)
+      output_a  =  out_a(A_h, alpha_h, H[:, i], A[i], pref_alg)
 
-      input.a = alr
-      da <- input.a - (output.a)
+      input_a = alr
+      da  =  input_a - (output_a)
       
       A[i+1]= A[i]+ da*dt
 
-#---------------
+        #---------------
 
-      # Pelagic Predator Density (nos.m-3)- solve for time + dt using implicit time Euler upwind finite difference (help from Ken Andersen and Richard Law)
+      # Pelagic Predator Density (nos_m-3)- solve for time + dt using implicit time Euler upwind finite difference (help from Ken Andersen and Richard Law)
       
       # Matrix setup for implict differencing
-      Ai.u<-Bi.u<-Si.u<-array(0, c(length(x), 1))   
+      Ai_u = Bi_u = Si_u = zeros(Float64, length(x), 1)   
       
-      idx=(ref+1):end  #shorthand for matrix referencing
+      idx=(Int64(ref)+1):size_end  #shorthand for matrix referencing
       #This is just the locations in the matrix of predatory fish bigger than plankton, and bigger than eggs (hence the +1)
       
-      Ai.u[idx]<-(1/log(10))*-GG.u[idx-1,i]*dt/dx
-      Bi.u[idx]<-1+(1/log(10))*GG.u[idx,i]*dt/dx +Z.u[idx,i]*dt
-      Si.u[idx]<-U[idx,i]
+      Ai_u[idx] = (1/log(10)) .* -GG_u[idx .- 1,i] .* (dt/dx)
+      Bi_u[idx] = 1 .+ (1/log(10)) .* GG_u[idx,i] .* (dt/dx) .+ Z_u[idx,i] .* dt
+      Si_u[idx] = U[idx,i]
       
       # Boundary condition at upstream end
-      Ai.u[ref]<-0
-      Bi.u[ref]<-1
-      Si.u[ref]<-U[ref,1]
+      Ai_u[Int64(ref)] = 0
+      Bi_u[Int64(ref)] = 1
+      Si_u[Int64(ref)] = U[Int64(ref),1]
       
       # Invert matrix
       # hold plankton constant thru time on left hand boundary
-      U[1:(ref-1),i+1]<-U[1:(ref-1),1]
+      U[1:(Int64(ref)-1),i+1] = U[1:(Int64(ref)-1),1]
       
       #hold small inverts constant through time
-      V[refinv:(ref.det-1),i+1]<-V[refinv:(ref.det-1),1]
+      V[Int64(refinv):(Int64(ref_det)-1),i+1] = V[Int64(refinv):(Int64(ref_det)-1),1]
       
        
-#-------------------------
-##New recruitment function
+        #-------------------------
+        ##New recruitment function
 
-#if (pred.stock.recruitment==T) {
+        #if (pred_stock_recruitment==T) {
 
-      #U[ref,i+1]<-U[ref,i] + (sum(R.u[(ref+1):end,i]*10^x[(ref+1):end]*U[(ref+1):end,i]*dx)*dt)/(dx*10^x[ref]) - (dt/dx)*(1/log(10))*(GG.u[ref,i])*U[ref,i]-dt*Z.u[ref,i]*U[ref,i]
-      #energy for recruitment for each size (bigger than egg, hence ref+1) multiplied by its size, by its abundance
-  ##**********Need to work through the last part of this - don't really get all the dt / dx stuff
+            #U[Int64(ref),i+1] = U[Int64(ref),i] + (sum(R_u[(Int64(ref)+1):end,i]*10^x[(Int64(ref)+1):end]*U[(Int64(ref)+1):end,i]*dx)*dt)/(dx*10^x[Int64(ref)]) - (dt/dx)*(1/log(10))*(GG_u[Int64(ref),i])*U[Int64(ref),i]-dt*Z_u[Int64(ref),i]*U[Int64(ref),i]
+            #energy for recruitment for each size (bigger than egg, hence Int64(ref)+1) multiplied by its size, by its abundance
+        ##****Need to work through the last part of this - don't really get all the dt / dx stuff
 
-#} else {
+        #} else {
   
       ##Original code for no recruitment from stock
       #recruitment at smallest consumer mass  - hold constant       
-      U[ref,i+1]<-U[ref,1]
+      U[Int64(ref),i+1] = U[Int64(ref),1]
       
-#}
-#-------------------------      
+        #}
+        #-------------------------      
       
       
       #loop calculation
-      for (j in (ref+1):(end)){
+      for j in (Int64(ref)+1):size_end
         
-        #U[j,i+1]<-U[j,i]-(dt/dx)*(1/log(10))*(GG.u[j,i])*U[j,i] + (dt/dx)*(1/log(10))*GG.u[j-1,i]*U[j-1,i] -dt*Z.u[j,i]*U[j,i]
-        U[j,i+1]<-(Si.u[j]-Ai.u[j]*U[j-1,i+1])/Bi.u[j]
-      }
+        #U[j,i+1] = U[j,i]-(dt/dx)*(1/log(10))*(GG_u[j,i])*U[j,i] + (dt/dx)*(1/log(10))*GG_u[j-1,i]*U[j-1,i] -dt*Z_u[j,i]*U[j,i]
+        U[j,i+1] = (Si_u[j]-Ai_u[j]*U[max(1, j-1),i+1]) / Bi_u[j]
+      end
       
       
-      ## Herbivore Density (nos.m-3) - same algorithm as above
+      ## Herbivore Density (nos_m-3) - same algorithm as above
       
-      Ai.h<-Bi.h<-Si.h<-array(0, c(length(x), 1))   
-      idx=(ref.herb+1):end  #shorthand for matrix referencing
+      Ai_h = Bi_h = Si_h = zeros(length(x), 1)   
+      idx=(Int64(ref_herb)+1):size_end  #shorthand for matrix referencing
       
-      Ai.h[idx]<-(1/log(10))*-GG.h[idx-1,i]*dt/dx
-      Bi.h[idx]<-1+(1/log(10))*GG.h[idx,i]*dt/dx +Z.h[idx,i]*dt
-      Si.h[idx]<-H[idx,i]
+      Ai_h[idx] = (1/log(10)) .* -GG_h[idx .- 1,i] .* (dt/dx)
+      Bi_h[idx] = 1 .+ (1/log(10)) .* GG_h[idx,i] .* dt/dx .+ Z_h[idx,i] .* dt
+      Si_h[idx] = H[idx,i]
       
       # boundary condition at upstream end
       
-      Ai.h[ref.herb]<-0
-      Bi.h[ref.herb]<-1
-      Si.h[ref.herb]<-H[ref.herb,1]  
+      Ai_h[Int64(ref_herb)] = 0
+      Bi_h[Int64(ref_herb)] = 1
+      Si_h[Int64(ref_herb)] = H[Int64(ref_herb),1]  
       
       # invert matrix
 
-#-------------------------
-##New recruitment function
+        #-------------------------
+        ##New recruitment function
 
-      #H[ref.herb,i+1]<-H[ref.herb,i]+ sum(R.h[(ref.herb+1):end,i]*10^x[(ref.herb+1):end]*H[(ref.herb+1):end,i]*dx)*dt/(dx*10^x[ref.herb]) - (dt/dx)*(1/log(10))*(GG.h[ref.herb,i])*H[ref.herb,i]-dt*Z.h[ref.herb,i]*H[ref.herb,i]
-      
-      ##Original code for no recruitment from stock
-      # recruitment at smallest detritivore mass  - hold constant 
-      H[ref.herb,i+1]<-H[ref.herb,1]
-#-------------------------
+            #H[Int64(ref_herb),i+1] = H[Int64(ref_herb),i]+ sum(R_h[(Int64(ref_herb)+1):end,i]*10^x[(Int64(ref_herb)+1):end]*H[(Int64(ref_herb)+1):end,i]*dx)*dt/(dx*10^x[Int64(ref_herb)]) - (dt/dx)*(1/log(10))*(GG_h[Int64(ref_herb),i])*H[Int64(ref_herb),i]-dt*Z_h[Int64(ref_herb),i]*H[Int64(ref_herb),i]
+            
+            ##Original code for no recruitment from stock
+            # recruitment at smallest detritivore mass  - hold constant 
+            H[Int64(ref_herb),i+1] = H[Int64(ref_herb),1]
+        #-------------------------
 
-      #loop calculation
-      for (j in (ref.herb+1):(end)){
-        
-        #V[j,i+1]<-V[j,i]-(dt/dx)*(1/log(10))*(GG.v[j,i])*V[j,i] + (dt/dx)*(1/log(10))*GG.v[j-1,i]*V[j-1,i]-dt*Z.v[j,i]*V[j,i]
-        H[j,i+1]<-(Si.h[j]-Ai.h[j]*H[j-1,i+1])/Bi.h[j]
-      }		
+        #loop calculation
+        for j in (Int64(ref_herb)+1):size_end
+            
+            #V[j,i+1] = V[j,i]-(dt/dx)*(1/log(10))*(GG_v[j,i])*V[j,i] + (dt/dx)*(1/log(10))*GG_v[j-1,i]*V[j-1,i]-dt*Z_v[j,i]*V[j,i]
+            H[j,i+1] = (Si_h[j]-Ai_h[j]*H[max(1, j-1),i+1])/Bi_h[j]
+        end
       
       
-      ## Benthic Detritivore Density (nos.m-3) - same algorithm as above
+      ## Benthic Detritivore Density (nos_m-3) - same algorithm as above
       
-      Ai.v<-Bi.v<-Si.v<-array(0, c(length(x), 1))   
-      idx=(ref.det+1):inv_end  #shorthand for matrix referencing
+      Ai_v = Bi_v = Si_v = zeros(length(x), 1)   
+      idx=(Int64(ref_det)+1):inv_end  #shorthand for matrix referencing
       
-      Ai.v[idx]<-(1/log(10))*-GG.v[idx-1,i]*dt/dx
-      Bi.v[idx]<-1+(1/log(10))*GG.v[idx,i]*dt/dx +Z.v[idx,i]*dt
-      Si.v[idx]<-V[idx,i]
+      Ai_v[idx] = (1/log(10)) .* -GG_v[idx .- 1,i] .* dt/dx
+      Bi_v[idx] = 1 .+ (1/log(10)) .* GG_v[idx,i] .* dt/dx .+ Z_v[idx,i] .* dt
+      Si_v[idx] = V[idx,i]
       
       # boundary condition at upstream end
       
-      Ai.v[ref.det]<-0
-      Bi.v[ref.det]<-1
-      Si.v[ref.det]<-V[ref.det,1]  
+      Ai_v[Int64(ref_det)] = 0
+      Bi_v[Int64(ref_det)] = 1
+      Si_v[Int64(ref_det)] = V[Int64(ref_det),1]  
       
       # invert matrix
       
-#-------------------------
-##New recruitment function
+        #-------------------------
+        ##New recruitment function
 
-      #V[ref.det,i+1]<-V[ref.det,i]+ sum(R.v[(ref.det+1):end,i]*10^x[(ref.det+1):end]*V[(ref.det+1):end,i]*dx)*dt/(dx*10^x[ref.det]) - (dt/dx)*(1/log(10))*(GG.v[ref.det,i])*V[ref.det,i]-dt*Z.v[ref.det,i]*V[ref.det,i]
-  
-      ##Original code for no recruitment from stock
-      # recruitment at smallest detritivore mass  - hold constant 
-      V[ref.det,i+1]<-V[ref.det,1]      
-#-------------------------
+            #V[Int64(ref_det),i+1] = V[Int64(ref_det),i]+ sum(R_v[(Int64(ref_det)+1):end,i]*10^x[(Int64(ref_det)+1):end]*V[(Int64(ref_det)+1):end,i]*dx)*dt/(dx*10^x[Int64(ref_det)]) - (dt/dx)*(1/log(10))*(GG_v[Int64(ref_det),i])*V[Int64(ref_det),i]-dt*Z_v[Int64(ref_det),i]*V[Int64(ref_det),i]
+        
+            ##Original code for no recruitment from stock
+            # recruitment at smallest detritivore mass  - hold constant 
+            V[Int64(ref_det),i+1] = V[Int64(ref_det),1]      
+        #-------------------------
     
       
       #loop calculation
-      for (j in (ref.det+1):(inv_end)){
+      for j in (Int64(ref_det)+1):(inv_end)
         
-        #V[j,i+1]<-V[j,i]-(dt/dx)*(1/log(10))*(GG.v[j,i])*V[j,i] + (dt/dx)*(1/log(10))*GG.v[j-1,i]*V[j-1,i]-dt*Z.v[j,i]*V[j,i]
-        V[j,i+1]<-(Si.v[j]-Ai.v[j]*V[j-1,i+1])/Bi.v[j]
-      }  	
+        #V[j,i+1] = V[j,i]-(dt/dx)*(1/log(10))*(GG_v[j,i])*V[j,i] + (dt/dx)*(1/log(10))*GG_v[j-1,i]*V[j-1,i]-dt*Z_v[j,i]*V[j,i]
+        V[j,i+1] = (Si_v[j]-Ai_v[j]*V[j-1,i+1])/Bi_v[j]
+      end
       
-    } 
+    end
       
     
     #Biomasses through time
-    Pred_bio<-colSums(U[ref:end,]*dx*10^x[ref:end]) 
-    Herb_bio<-colSums(H[ref.herb:end,]*dx*10^x[ref.herb:end]) 
-    Inv_bio<-colSums(V[refinv:inv_end,]*dx*10^x[refinv:inv_end]) 
+    Pred_bio = vec(sum(U[Int64(ref):end,:] .* dx .* 10 .^ x[Int64(ref):end], dims = 1)) 
+    Herb_bio = vec(sum(H[Int64(ref_herb):end,:] .* dx .* 10 .^ x[Int64(ref_herb):end], dims = 1)) 
+    Inv_bio = vec(sum(V[Int64(refinv):inv_end,:] .* dx .* 10 .^ x[Int64(refinv):inv_end], dims = 1)) 
     
     #To match data of fish > 5cm
-    Pred_dat_bio_5<-colSums(U[ref.dst_5:ref.den,]*dx*10^x[ref.dst_5:ref.den])
-    Herb_dat_bio_5<-colSums(H[ref.dst_5:ref.den,]*dx*10^x[ref.dst_5:ref.den])
+    Pred_dat_bio_5 = vec(sum(U[Int64(ref_dst_5):Int64(ref_den),:] .* dx .* 10 .^ x[Int64(ref_dst_5):Int64(ref_den)], dims = 1))
+    Herb_dat_bio_5 = vec(sum(H[Int64(ref_dst_5):Int64(ref_den),:] .* dx .* 10 .^ x[Int64(ref_dst_5):Int64(ref_den)], dims = 1))
     
     #To match data of fish > 5cm
-    Pred_dat_bio_10<-colSums(U[ref.dst_10:ref.den,]*dx*10^x[ref.dst_10:ref.den])
-    Herb_dat_bio_10<-colSums(H[ref.dst_10:ref.den,]*dx*10^x[ref.dst_10:ref.den])
+    Pred_dat_bio_10 = vec(sum(U[Int64(ref_dst_10):Int64(ref_den),:] .* dx .* 10 .^ x[Int64(ref_dst_10):Int64(ref_den)], dims = 1))
+    Herb_dat_bio_10 = vec(sum(H[Int64(ref_dst_10):Int64(ref_den),:] .* dx .* 10 .^ x[Int64(ref_dst_10):Int64(ref_den)], dims = 1))
     
     #Productivity through time
-    P_prod_gr<-colSums(10^x[ref:end]*GG.u[ref:end,]*U[ref:end,]*dx)
-    H_prod_gr<-colSums(10^x*GG.h*H*dx)
-    I_prod_gr<-colSums(10^x*GG.v*V*dx)
+    P_prod_gr = vec(sum(10 .^ x[Int64(ref):end] .* GG_u[Int64(ref):end,:] .* U[Int64(ref):end,:] .* dx, dims = 1))
+    H_prod_gr = vec(sum(10 .^ x .* GG_h .* H .* dx, dims = 1))
+    I_prod_gr = vec(sum(10 .^ x .* GG_v .* V .* dx, dims = 1))
             
     #Fisheries productivity through time
-    FP_prod_gr<-colSums(10^x[Fref:end]*GG.u[Fref:end,]*U[Fref:end,]*dx)
-    FH_prod_gr<-colSums(10^x[Fref:end]*GG.h[Fref:end,]*H[Fref:end,]*dx)
+    FP_prod_gr = vec(sum(10 .^ x[Int64(Fref):end] .* GG_u[Int64(Fref):end,:] .* U[Int64(Fref):end,:] .* dx, dims = 1))
+    FH_prod_gr = vec(sum(10 .^ x[Int64(Fref):end] .* GG_h[Int64(Fref):end,:] .* H[Int64(Fref):end,:] .* dx, dims = 1))
     
     #Algal dynamics through time
-    Al_bio <- A
-    Det_bio <- W
+    Al_bio  =  A
+    Det_bio  =  W
     
     #Consumption rates through time
-    totaleatenbypred<-sum(eatenbypred[(ref+1):end]*dx)
-    eatenbysize <- eatenbypred[(ref+1):end]#*dx
-    totaleatenbyben<-sum((1/K.d)*10^x[(ref.det+1):end]*GG.v[(ref.det+1):end,N-1]*V[(ref.det+1):end,N-1]*dx)   #consumption rate g.m-3.yr-1
+    totaleatenbypred = sum(eatenbypred[(Int64(ref)+1):end]*dx)
+    eatenbysize  =  eatenbypred[(Int64(ref)+1):end]#*dx
+    totaleatenbyben = sum((1/K_d)*10^x[(Int64(ref_det)+1):end]*GG_v[(Int64(ref_det)+1):end,N-1]*V[(Int64(ref_det)+1):end,N-1]*dx)   #consumption rate g_m-3.yr-1
 
     #Proportional refuges
 
-     return(list(Body.size = x, Preds=U[,N-1], P_grth=GG.u[, N-1], P_mrt=PM.u[, N-1],
-                  Herbs=H[,N-1], H_grth=GG.h[,N-1], H_mrt=PM.h[,N-1],
-                  Invs=V[,N-1], I_grth=GG.v[,N-1], I_mrt=PM.v[,N-1], 
+     return list(Body_size = x, Preds=U[:,N-1], P_grth=GG_u[:, N-1], P_mrt=PM_u[:, N-1],
+                  Herbs=H[:,N-1], H_grth=GG_h[:,N-1], H_mrt=PM_h[:,N-1],
+                  Invs=V[:,N-1], I_grth=GG_v[:,N-1], I_mrt=PM_v[:,N-1], 
                   Pred_gm = Pred_bio[length(Pred_bio)], Herb_gm = Herb_bio[length(Herb_bio)], Inv_gm = Inv_bio[length(Inv_bio)],
                   Pred_dat_gm_5 = Pred_dat_bio_5[length(Pred_dat_bio_5)], Herb_dat_gm_5 = Herb_dat_bio_5[length(Herb_dat_bio_5)],
                   Pred_prod = P_prod_gr[length(P_prod_gr)-1], Herb_prod = H_prod_gr[length(H_prod_gr)-1], Inv_prod = I_prod_gr[length(I_prod_gr)-1],
                   Fpred_prod = FP_prod_gr[length(FP_prod_gr)-1], Fherb_prod = FH_prod_gr[length(FH_prod_gr)-1],  
-                  Yield_p = Yp[,N-1], Yield_h = Yh[,N-1], W = W[N-1], A = A[N-1], p_bio_time = Pred_bio, h_bio_time = Herb_bio, i_bio_time = Inv_bio, 
+                  Yield_p = Yp[:,N-1], Yield_h = Yh[:,N-1], W = W[N-1], A = A[N-1], p_bio_time = Pred_bio, h_bio_time = Herb_bio, i_bio_time = Inv_bio, 
                   A_time = Al_bio, Det_time = Det_bio,
                   Pred_consump = totaleatenbypred,
                   pred_by_size = eatenbysize,
                   Invert_consump = totaleatenbyben,
-                  Pred_ref = a.u[,N-1],
-                  Herb_ref = a.h[,N-1],
-                  params=params))
-      
-      
-    })  
-  # end with(params)
-  
-  
-}#end size-based model function
+                  Pred_ref = a_u[:,N-1],
+                  Herb_ref = a_h[:,N-1],
+                  params=params)  
+end
