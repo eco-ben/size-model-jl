@@ -4,7 +4,8 @@
 #---------------------------------------------------------------------------------------
 
 refuges  =  CSV.read("test_refuges.csv", DataFrame)
-refuge  =  refuges[:,8]
+refuge  =  refuges[:,5]
+refuge = zeros(length(refuge))
 
 #Algal dynamics
 alr = 109#0.2 #Maximum algal growth rate per year
@@ -115,7 +116,7 @@ invmin = -6
 
 
 ## Vector with size bins 
-x    = xmin:dx:xmax
+x    = collect(xmin:dx:xmax)
 y    = x
 size_end  = length(x)
 

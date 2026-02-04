@@ -17,8 +17,8 @@ function run_model(params, initial_run = false, fish_herbs = true)
     end
     
     # Functions to build lookup tables for components of integration which remain constant
-    function gphi_f(q) return 10^(-q)       * phi_f(q ) end  #growth
-    function mphi_f(q2; alpha=alpha) return 10^(alpha*q2) * phi_f(q2) end	#mortality
+    function gphi_f(q) return 10 .^ (-q)       .* phi_f(q ) end  #growth
+    function mphi_f(q2; alpha=alpha) return 10 .^ (alpha .* q2) .* phi_f(q2) end	#mortality
     
     # Function to build lookup table for components of 10^(alpha*x)
     function expax_f(x, alpha) return 10 .^ collect(alpha*x ) end
@@ -99,7 +99,7 @@ function run_model(params, initial_run = false, fish_herbs = true)
     q2 = -q1	
     
     # matrix for recording the two size spectra over time
-    V = U = H   = zeros(Float64, length(x), N)
+    V, U, H = (copy(zeros(Float64, length(x), N)) for _ in 1:3)
     
     # vector to hold detrtitus biomass density (g_m-3)
     W = zeros(N)
@@ -108,10 +108,10 @@ function run_model(params, initial_run = false, fish_herbs = true)
     A = zeros(N)
     
     # matrix for keeping track of growth and ingested food:
-    GG_v = GG_u = GG_h = zeros(length(x), N)  
+    GG_v, GG_u, GG_h = (copy(zeros(Float64, length(x), N)) for _ in 1:3)
 
     # matrix for keeping track of vulnerability through time
-    a_u = a_h = zeros(length(x), N)
+    a_u, a_h = (copy(zeros(Float64, length(x), N)) for _ in 1:2)
    
     
 ##*****
@@ -119,13 +119,13 @@ function run_model(params, initial_run = false, fish_herbs = true)
     #R_v = R_u = R_h = array(0, c(length(x), N))
     
     # matrix for keeping track of predation mortality
-    PM_v = PM_u = PM_h  = zeros(length(x), N)   
+    PM_v, PM_u, PM_h  = (copy(zeros(Float64, length(x), N)) for _ in 1:3)  
     
     # matrix for keeping track of  total mortality (Z)
-    Z_v = Z_u = Z_h = zeros(length(x), N)
+    Z_v, Z_u, Z_h = (copy(zeros(Float64, length(x), N)) for _ in 1:3)
     
     # matrix for keeping track of senescence mortality and other (intrinsic) mortality
-    SM_v = SM_u  = SM_h  =OM_v = OM_u  = OM_h = zeros(length(x))
+    SM_v, SM_u, SM_h, OM_v, OM_u, OM_h = (copy(zeros(length(x))) for _ in 1:6)
     
     # empty vector to hold fishing mortality rates at each size class
     Fvec_pred = zeros(length(x))
@@ -146,8 +146,8 @@ function run_model(params, initial_run = false, fish_herbs = true)
     expax = expax_f(x, alpha)
     
     # vectors for storing slopes of regression
-    slope_v_lm = slope_u_lm = zeros(N-1)
-    slope_v_nls = slope_u_nls = zeros(N-1)
+    slope_v_lm, slope_u_lm = copy(zeros(N-1)), copy(zeros(N-1))
+    slope_v_nls, slope_u_nls = copy(zeros(N-1)), copy(zeros(N-1))
     
     #---------------------------------------------------------------------------------------
     # Numerical integration
@@ -175,7 +175,7 @@ function run_model(params, initial_run = false, fish_herbs = true)
       
       # use values from non-complex initial run
       
-      U[1:(Int64(ref)-1),1] = u_init_f(x,ui0,r_plank)[1:(Int64(ref)-1)]*flow                    # (phyto+zoo)plankton size spectrum  
+      U[1:(Int64(ref)-1),1] = u_init_f(x,ui0,r_plank)[1:(Int64(ref)-1)] .* flow                    # (phyto+zoo)plankton size spectrum  
       U[Int64(ref):end,1] = initial_res.Preds[Int64(ref):end]                                      # initial consumer size spectrum
       H[Int64(ref_herb):end,1] = initial_res.Herbs[Int64(ref_herb):end]
       V[Int64(ref_det):inv_end,1] = initial_res.Invs[Int64(ref_det):inv_end]   # initial detritivore spectrum
@@ -201,7 +201,7 @@ function run_model(params, initial_run = false, fish_herbs = true)
     Fvec_herb[Int64(Fref):end] = fill(Fmort_herb,length(Fvec_herb[Int64(Fref):end]))
     
     # iteration over time
-    @showprogress for i in 1:(N-1)
+    @showprogress for i in 1:N-1
         ##----------------------------------------
         ##Density dependent vulnerability function
         a_u[:,i]  =  vulnerability(refuge, U[:,i]+H[:,i])      
@@ -324,7 +324,7 @@ function run_model(params, initial_run = false, fish_herbs = true)
       # Pelagic Predator Density (nos_m-3)- solve for time + dt using implicit time Euler upwind finite difference (help from Ken Andersen and Richard Law)
       
       # Matrix setup for implict differencing
-      Ai_u = Bi_u = Si_u = zeros(Float64, length(x), 1)   
+      Ai_u, Bi_u, Si_u = (copy(zeros(Float64, length(x), 1)) for _ in 1:3)   
       
       idx=(Int64(ref)+1):size_end  #shorthand for matrix referencing
       #This is just the locations in the matrix of predatory fish bigger than plankton, and bigger than eggs (hence the +1)
@@ -375,7 +375,7 @@ function run_model(params, initial_run = false, fish_herbs = true)
       
       ## Herbivore Density (nos_m-3) - same algorithm as above
       
-      Ai_h = Bi_h = Si_h = zeros(length(x), 1)   
+      Ai_h, Bi_h, Si_h = (copy(zeros(length(x), 1)) for _ in 1:3)   
       idx=(Int64(ref_herb)+1):size_end  #shorthand for matrix referencing
       
       Ai_h[idx] = (1/log(10)) .* -GG_h[idx .- 1,i] .* (dt/dx)
@@ -410,7 +410,7 @@ function run_model(params, initial_run = false, fish_herbs = true)
       
       ## Benthic Detritivore Density (nos_m-3) - same algorithm as above
       
-      Ai_v = Bi_v = Si_v = zeros(length(x), 1)   
+      Ai_v, Bi_v, Si_v = (copy(zeros(length(x), 1)) for _ in 1:3)   
       idx=(Int64(ref_det)+1):inv_end  #shorthand for matrix referencing
       
       Ai_v[idx] = (1/log(10)) .* -GG_v[idx .- 1,i] .* dt/dx
@@ -475,11 +475,11 @@ function run_model(params, initial_run = false, fish_herbs = true)
     #Consumption rates through time
     totaleatenbypred = sum(eatenbypred[(Int64(ref)+1):end]*dx)
     eatenbysize  =  eatenbypred[(Int64(ref)+1):end]#*dx
-    totaleatenbyben = sum((1/K_d)*10^x[(Int64(ref_det)+1):end]*GG_v[(Int64(ref_det)+1):end,N-1]*V[(Int64(ref_det)+1):end,N-1]*dx)   #consumption rate g_m-3.yr-1
+    totaleatenbyben = sum((1/K_d)*10 .^ x[(Int64(ref_det)+1):end] .* GG_v[(Int64(ref_det)+1):end,N-1] .* V[(Int64(ref_det)+1):end,N-1] .* dx)   #consumption rate g_m-3.yr-1
 
     #Proportional refuges
 
-     return list(Body_size = x, Preds=U[:,N-1], P_grth=GG_u[:, N-1], P_mrt=PM_u[:, N-1],
+     return (Body_size = x, Preds=U[:,N-1], P_grth=GG_u[:, N-1], P_mrt=PM_u[:, N-1],
                   Herbs=H[:,N-1], H_grth=GG_h[:,N-1], H_mrt=PM_h[:,N-1],
                   Invs=V[:,N-1], I_grth=GG_v[:,N-1], I_mrt=PM_v[:,N-1], 
                   Pred_gm = Pred_bio[length(Pred_bio)], Herb_gm = Herb_bio[length(Herb_bio)], Inv_gm = Inv_bio[length(Inv_bio)],
